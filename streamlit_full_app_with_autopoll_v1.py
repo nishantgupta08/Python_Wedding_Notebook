@@ -33,12 +33,12 @@ FEEDBACK_CSV = os.path.join(DATA_DIR, "feedback.csv")
 # Submit-once check (by roll no)
 # ============================
 
-def has_submitted(roll_no: str) -> bool:
+def has_submitted(email: str) -> bool:
     if not os.path.exists(SUMMARY_CSV):
         return False
     try:
-        df = pd.read_csv(SUMMARY_CSV, usecols=["roll_no"])
-        return str(roll_no) in set(df["roll_no"].astype(str))
+        df = pd.read_csv(SUMMARY_CSV, usecols=["email"])
+        return str(email).lower().strip() in set(df["email"].astype(str).str.lower().str.strip())
     except Exception:
         return False
 
@@ -184,19 +184,19 @@ elite_guest_name = "Mr. Goyal"
 # Draft CSV helpers (after CATEGORIES)
 # ============================
 
-def _draft_path(roll_no: str) -> str:
-    return os.path.join(DRAFTS_DIR, f"{roll_no}.csv")
+def _draft_path(email: str) -> str:
+    # Use email as identifier, sanitize for filename
+    safe_email = email.lower().strip().replace("@", "_at_").replace(".", "_")
+    return os.path.join(DRAFTS_DIR, f"{safe_email}.csv")
 
 
 def save_draft_csv(candidate: dict):
-    if not candidate or not candidate.get("roll_no"):
+    if not candidate or not candidate.get("email"):
         return
     row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "roll_no": candidate.get("roll_no", ""),
         "name": candidate.get("name", ""),
         "email": candidate.get("email", ""),
-        "section": candidate.get("section", ""),
         "about": candidate.get("about", ""),
         "cat_idx": st.session_state.get("cat_idx", 0),
         "task_idx": st.session_state.get("task_idx", 0),
@@ -210,11 +210,11 @@ def save_draft_csv(candidate: dict):
             row[f"rev_{key}_{i}"]  = int(st.session_state.progress[key]["revealed"][i])
             row[f"cor_{key}_{i}"]  = int(st.session_state.progress[key]["correct"][i])
             row[f"lock_{key}_{i}"] = int(st.session_state.progress[key]["locked"][i])
-    pd.DataFrame([row]).to_csv(_draft_path(candidate["roll_no"]), index=False)
+    pd.DataFrame([row]).to_csv(_draft_path(candidate["email"]), index=False)
 
 
-def load_draft_csv(roll_no: str):
-    path = _draft_path(roll_no)
+def load_draft_csv(email: str):
+    path = _draft_path(email)
     if not os.path.exists(path):
         return None
     df = pd.read_csv(path)
@@ -222,10 +222,8 @@ def load_draft_csv(roll_no: str):
         return None
     rec = df.iloc[-1].to_dict()
     cand = {
-        "roll_no": str(rec.get("roll_no", "")),
         "name": str(rec.get("name", "")),
         "email": str(rec.get("email", "")),
-        "section": str(rec.get("section", "")),
         "about": str(rec.get("about", "")),
     }
     st.session_state.cat_idx = int(rec.get("cat_idx", 0))
@@ -242,8 +240,8 @@ def load_draft_csv(roll_no: str):
     return cand
 
 
-def has_draft(roll_no: str) -> bool:
-    return os.path.exists(_draft_path(roll_no))
+def has_draft(email: str) -> bool:
+    return os.path.exists(_draft_path(email))
 
 # ============================
 # Session state boot
@@ -287,19 +285,19 @@ for cat in CATEGORIES:
             cur[field] = lst
 
 # ============================
-# Auto-resume via URL param (?roll=...)
+# Auto-resume via URL param (?email=...)
 # ============================
 qp = dict(st.query_params)
-roll_qp = qp.get("roll")
-def _persist_qp_with_roll(rno: str):
-    st.query_params.update({"roll": rno})
+email_qp = qp.get("email")
+def _persist_qp_with_email(email: str):
+    st.query_params.update({"email": email.lower().strip()})
 
 
-if roll_qp and not st.session_state.candidate:
-    cand = load_draft_csv(roll_qp)
+if email_qp and not st.session_state.candidate:
+    cand = load_draft_csv(email_qp)
     if cand:
         st.session_state.candidate = cand
-        if has_submitted(roll_qp):
+        if has_submitted(email_qp):
             st.session_state.submitted = True
         st.success(f"Welcome back, {cand['name']} — draft restored.")
 
@@ -318,27 +316,21 @@ if st.session_state.onboarding_step == 0:
     st.subheader("Welcome 👋")
     st.write("Please provide your basic details to continue.")
     with st.form("welcome_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Full Name", placeholder="Mahima Gupta")
-            roll_no = st.text_input("Roll No", placeholder="CS-2025-042")
-        with col2:
-            email = st.text_input("Email", placeholder="mahima@example.com")
-            section = st.text_input("Class/Section", placeholder="CSE-A")
-        agreed = st.checkbox("I confirm that I will submit only once.", value=False)
+        name = st.text_input("Full Name", placeholder="Mahima Gupta")
+        email = st.text_input("Email", placeholder="mahima@example.com")
         go = st.form_submit_button("Let's Go ▶️")
     if go:
-        if not (name and roll_no and agreed):
-            st.error("Please fill Name, Roll No., and confirm the checkbox to continue.")
+        if not (name and email):
+            st.error("Please fill Name and Email to continue.")
             st.stop()
-        rno = roll_no.strip()
-        if has_submitted(rno):
+        email_clean = email.strip().lower()
+        if has_submitted(email_clean):
             st.error("Our records show you have already submitted this test. If this is a mistake, contact the instructor.")
             st.stop()
-        st.session_state.candidate = {"name": name.strip(), "roll_no": rno, "email": email.strip(), "section": section.strip(), "about": ""}
-        _persist_qp_with_roll(rno)
-        if has_draft(rno):
-            cand2 = load_draft_csv(rno)
+        st.session_state.candidate = {"name": name.strip(), "email": email_clean, "about": ""}
+        _persist_qp_with_email(email_clean)
+        if has_draft(email_clean):
+            cand2 = load_draft_csv(email_clean)
             if cand2:
                 st.session_state.candidate = cand2
                 st.success("Draft found and restored.")
@@ -403,8 +395,8 @@ with col1:
     if st.button("Submit feedback"):
         row = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "roll_no": candidate.get("roll_no",""),
             "name": candidate.get("name",""),
+            "email": candidate.get("email",""),
             "rating": fb_rating,
             "feedback": fb_text.strip(),
         }
@@ -433,32 +425,49 @@ with col2:
     cat = CATEGORIES[st.session_state.cat_idx]
     st.subheader(f"Section: {cat['title']}")
 
+    # Submit button at the top
+    submit_col1, submit_col2 = st.columns([0.6, 0.4])
+    with submit_col1:
+        finalize = st.button("🧷 Finalize & Submit Test", type="primary", disabled=st.session_state.submitted, use_container_width=True)
+    with submit_col2:
+        st.caption("You can submit **once**. After submitting, editing is disabled.")
+
     def _sync_select_to_idx():
         st.session_state.task_idx = st.session_state.task_select
         save_draft_csv(candidate)
 
     def _go_next():
-        names = [t["name"] for t in cat["tasks"]]
-        st.session_state.task_idx = (st.session_state.task_idx + 1) % len(names)
-        st.session_state.task_select = st.session_state.task_idx
+        # Get current section and task info
+        current_cat_idx = st.session_state.cat_idx
+        current_task_idx = st.session_state.task_idx
+        current_cat = CATEGORIES[current_cat_idx]
+        num_tasks_in_section = len(current_cat["tasks"])
+        
+        # Check if we're at the last task in current section
+        if current_task_idx >= num_tasks_in_section - 1:
+            # Move to next section
+            next_cat_idx = (current_cat_idx + 1) % len(CATEGORIES)
+            st.session_state.cat_idx = next_cat_idx
+            st.session_state.task_idx = 0
+            st.session_state.task_select = 0
+        else:
+            # Move to next task in current section
+            st.session_state.task_idx = current_task_idx + 1
+            st.session_state.task_select = st.session_state.task_idx
+        
         save_draft_csv(candidate)
 
     task_names = [t["name"] for t in cat["tasks"]]
-    col_tl, col_tr = st.columns([0.8, 0.2])
-    with col_tl:
-        st.markdown("### Tasks")
-        st.selectbox(
-            "Jump to a task:",
-            options=list(range(len(task_names))),
-            format_func=lambda i: f"{i+1}. {task_names[i]}",
-            index=st.session_state.task_idx,
-            key="task_select",
-            on_change=_sync_select_to_idx,
-            disabled=st.session_state.submitted,
-        )
-    with col_tr:
-        st.button("➜ Next task", on_click=_go_next, disabled=st.session_state.submitted)
-        st.caption("Cycles to the first task after the last one.")
+    st.markdown("### Tasks")
+    st.selectbox(
+        "Jump to a task:",
+        options=list(range(len(task_names))),
+        format_func=lambda i: f"{i+1}. {task_names[i]}",
+        index=st.session_state.task_idx,
+        key="task_select",
+        on_change=_sync_select_to_idx,
+        disabled=st.session_state.submitted,
+    )
 
     idx = st.session_state.task_idx
     task = cat["tasks"][idx]
@@ -486,7 +495,8 @@ with col2:
 
     code_key = f"code_{cur_key}_{idx}"
     existing = st.session_state.answers.get(code_key, "")
-    locked = st.session_state.submitted or cur_prog["locked"][idx]
+    # Only lock if test is submitted - allow unlimited attempts otherwise
+    locked = st.session_state.submitted
     user_code = st.text_area(
         "Your code:",
         value=existing,
@@ -528,6 +538,7 @@ with col2:
             st.error("Internal error in solution code:")
             st.code(sol_err)
         else:
+            # Only compare the final output value (check_var) - no other validation
             target = task["check_var"]
             expected = sol_ns.get(target, None)
             got = (user_ns or {}).get(target, None)
@@ -537,23 +548,34 @@ with col2:
                         st.code(f"{var} = {repr(user_ns[var])}")
                 if got is not None:
                     st.code(f"{target} = {repr(got)}")
+            # Evaluation: Only check if the target variable value matches (no other checks)
             if expected == got and not cur_prog["revealed"][idx]:
                 if not cur_prog["correct"][idx]:
                     cur_prog["correct"][idx] = True
                 st.success("Great job! Your answer matches the expected result. ✅ Point awarded.")
                 st.balloons()
+            elif expected == got and cur_prog["revealed"][idx]:
+                # Correct answer but revealed - show success but no points
+                st.info("Your answer is correct, but since you revealed the solution, no marks will be awarded for this task.")
             else:
-                cur_prog["locked"][idx] = True
-                st.error("That's not correct. This task is now locked. See the correct solution below.")
-                st.markdown("**Correct solution:**")
-                st.code(task["solution"])
+                # Wrong answer - allow unlimited attempts, don't lock
+                st.warning("That's not correct. You can try again as many times as you want.")
                 st.markdown(f"**Expected `{target}` value:**")
                 st.code(repr(expected))
+                st.caption("💡 Keep trying! You can check your answer as many times as needed.")
         save_draft_csv(candidate)
+
+    # Next task button after each question
+    st.markdown("---")
+    next_col1, next_col2 = st.columns([0.3, 0.7])
+    with next_col1:
+        st.button("➜ Next task", on_click=_go_next, disabled=st.session_state.submitted, use_container_width=True)
+    with next_col2:
+        st.caption("Moves to next task. If last task in section, jumps to next section.")
 
     st.markdown("---")
 
-    # Finalize & submit (CSV only, one-time)
+    # Finalize & submit handler (CSV only, one-time)
     def evaluate_all():
         results = []
         score = 0
@@ -582,11 +604,13 @@ with col2:
                 elif user_err:
                     status = "error_user"
                 else:
+                    # Only compare the final output value (check_var) - no other validation
                     target = task["check_var"]
                     if target in sol_ns:
                         expected_val = sol_ns[target]
                     if user_ns and target in user_ns:
                         user_val = user_ns[target]
+                    # Evaluation: Only check if the target variable value matches (no other checks)
                     if expected_val == user_val and not revealed:
                         status = "correct"
                         correct_count += 1
@@ -616,21 +640,14 @@ with col2:
             "correct_count": correct_count,
         }
 
-    final_cols = st.columns([0.5, 0.5])
-    with final_cols[0]:
-        finalize = st.button("🧷 Finalize & Submit Test", type="primary", disabled=st.session_state.submitted)
-    with final_cols[1]:
-        st.caption("You can submit **once**. After submitting, editing is disabled and you'll see correct answers for any wrong items.")
-
+    # Handle submit button click (button is now at the top)
     if finalize and not st.session_state.submitted:
         eval_pack = evaluate_all()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         summary_row = {
             "timestamp": now,
-            "roll_no": candidate["roll_no"],
             "name": candidate["name"],
             "email": candidate.get("email",""),
-            "section": candidate.get("section",""),
             "about": candidate.get("about",""),
             "score": eval_pack["score"],
             "max_score": eval_pack["max_score"],
@@ -642,8 +659,8 @@ with col2:
         for r in eval_pack["results"]:
             details_rows.append({
                 "timestamp": now,
-                "roll_no": candidate["roll_no"],
                 "name": candidate["name"],
+                "email": candidate.get("email",""),
                 "category": r["category"],
                 "category_key": r["category_key"],
                 "task_index": r["task_index"],
